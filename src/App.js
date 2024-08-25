@@ -1,10 +1,10 @@
 import React, { useRef, useState, useEffect } from 'react';
+import io from 'socket.io-client';
 import './App.css';
 
-
+const socket = io('http://localhost:5000'); // Connect to the backend server
 
 function App() {
- 
   const canvasRef = useRef(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [lineWidth, setLineWidth] = useState(5);
@@ -15,8 +15,8 @@ function App() {
   const [fontSize, setFontSize] = useState(20);
   const [undoStack, setUndoStack] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
-  const [screenWidth , setScreenWidth] = useState(window.innerWidth);
-  const [screenHeight , setScreenHeight] = useState(window.innerHeight);
+  const [screenWidth, setScreenWidth] = useState(window.innerWidth);
+  const [screenHeight, setScreenHeight] = useState(window.innerHeight);
 
   useEffect(() => {
     const handleResize = () => {
@@ -27,7 +27,7 @@ function App() {
     window.addEventListener('resize', handleResize);
 
     return () => window.removeEventListener('resize', handleResize);
-  },[]);
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -38,7 +38,6 @@ function App() {
   }, [lineWidth, strokeStyle]);
 
   useEffect(() => {
-    // Load the canvas state from local storage
     const savedCanvas = localStorage.getItem('canvasState');
     if (savedCanvas) {
       const img = new Image();
@@ -48,6 +47,56 @@ function App() {
         context.drawImage(img, 0, 0);
       };
     }
+  }, []);
+
+  useEffect(() => {
+    socket.on('draw', (data) => {
+      const context = canvasRef.current.getContext('2d');
+      const { tool, strokeStyle, lineWidth, startPoint, endPoint, text } = data;
+      context.strokeStyle = strokeStyle;
+      context.lineWidth = lineWidth;
+      context.beginPath();
+
+      if (tool === 'brush') {
+        context.lineCap = 'round';
+        context.moveTo(startPoint.x, startPoint.y);
+        context.lineTo(endPoint.x, endPoint.y);
+        context.stroke();
+      } else if (tool === 'eraser') {
+        context.clearRect(endPoint.x - lineWidth / 2, endPoint.y - lineWidth / 2, lineWidth, lineWidth);
+      } else if (tool === 'line') {
+        context.moveTo(startPoint.x, startPoint.y);
+        context.lineTo(endPoint.x, endPoint.y);
+        context.stroke();
+      } else if (tool === 'rectangle') {
+        context.strokeRect(
+          startPoint.x,
+          startPoint.y,
+          endPoint.x - startPoint.x,
+          endPoint.y - startPoint.y
+        );
+      } else if (tool === 'circle') {
+        const radius = Math.sqrt(
+          Math.pow(endPoint.x - startPoint.x, 2) +
+          Math.pow(endPoint.y - startPoint.y, 2)
+        );
+        context.beginPath();
+        context.arc(startPoint.x, startPoint.y, radius, 0, 2 * Math.PI);
+        context.stroke();
+      } else if (tool === 'polygon') {
+        drawPolygon(context, startPoint.x, startPoint.y, endPoint.x, endPoint.y, 5);
+      } else if (tool === 'text') {
+        context.font = `${fontSize}px Arial`;
+        context.fillStyle = strokeStyle;
+        context.fillText(text, startPoint.x, startPoint.y);
+      }
+
+      context.closePath();
+    });
+
+    return () => {
+      socket.off('draw');
+    };
   }, []);
 
   const saveState = () => {
@@ -84,6 +133,16 @@ function App() {
 
     const context = canvasRef.current.getContext('2d');
     const { offsetX, offsetY } = e.nativeEvent;
+    const data = {
+      tool,
+      strokeStyle,
+      lineWidth,
+      startPoint,
+      endPoint: { x: offsetX, y: offsetY },
+      text,
+    };
+
+    socket.emit('draw', data); // Send drawing data to the server
 
     context.beginPath();
 
